@@ -45,7 +45,7 @@ def _get_or_create_team(cur, name: str, room: str = None) -> int:
     row = cur.fetchone()
     if row:
         return row["id"]
-    cur.execute("INSERT INTO teams (name, room) VALUES (?, ?)", (name, room))
+    cur.execute("INSERT INTO teams (name) VALUES (?)", (name,))
     return cur.lastrowid
 
 
@@ -66,7 +66,7 @@ def _get_or_create_player(cur, team_id: int, name: str) -> int:
 # Main parse function
 # ---------------------------------------------------------------------------
 
-def parse_scoresheet(filepath: str) -> dict:
+def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
     """
     Parse a single scoresheet PDF.
     Returns a summary dict with game metadata and row counts.
@@ -158,10 +158,10 @@ def parse_scoresheet(filepath: str) -> dict:
 
     cur.execute("""
         INSERT INTO games
-            (match_number, game_number, room, team1_id, team2_id,
+            (tournament_id, match_number, game_number, room, team1_id, team2_id,
              team1_score, team2_score, source_file)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (match_number, game_number, room, team1_id, team2_id,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (tournament_id, match_number, game_number, room, team1_id, team2_id,
           team1_final, team2_final, os.path.basename(filepath)))
     game_id = cur.lastrowid
 
@@ -447,7 +447,7 @@ def _parse_uc_section(lines: list) -> dict:
 # Batch import
 # ---------------------------------------------------------------------------
 
-def parse_all_scoresheets(directory: str) -> list:
+def parse_all_scoresheets(directory: str, tournament_id: int = None) -> list:
     """Parse every PDF in the given directory and return a list of result dicts."""
     results = []
     for fname in sorted(os.listdir(directory)):
@@ -455,7 +455,7 @@ def parse_all_scoresheets(directory: str) -> list:
             continue
         path = os.path.join(directory, fname)
         try:
-            result = parse_scoresheet(path)
+            result = parse_scoresheet(path, tournament_id=tournament_id)
             results.append(result)
             print(f"[OK] {fname} -> {result['team1']} {result['team1_score']} - "
                   f"{result['team2']} {result['team2_score']}")

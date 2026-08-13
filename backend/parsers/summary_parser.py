@@ -21,7 +21,7 @@ def _get_or_create_team(cur, name: str, room: str = None) -> int:
     row = cur.fetchone()
     if row:
         return row["id"]
-    cur.execute("INSERT INTO teams (name, room) VALUES (?, ?)", (name, room))
+    cur.execute("INSERT INTO teams (name) VALUES (?)", (name,))
     return cur.lastrowid
 
 
@@ -54,7 +54,7 @@ def _extract_text(filepath: str) -> str:
 #   ...
 #   "Totals  <heard>  <buzzed>  <correct>  <pct%>"
 
-def parse_player_stats(filepath: str) -> int:
+def parse_player_stats(filepath: str, tournament_id: int = None) -> int:
     """Parse ASUPlayerStats.pdf. Returns number of stat rows inserted."""
     text = _extract_text(filepath)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
@@ -101,10 +101,10 @@ def parse_player_stats(filepath: str) -> int:
             if not cur.fetchone():
                 cur.execute("""
                     INSERT INTO player_stats
-                        (player_id, match_label, category,
+                        (tournament_id, player_id, match_label, category,
                          questions_heard, buzzed_in, answered_correctly, accuracy_pct)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (current_player_id, match_label, category,
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (tournament_id, current_player_id, match_label, category,
                       heard, buzzed, correct, accuracy))
                 rows_inserted += 1
             i += 1
@@ -155,7 +155,7 @@ def parse_player_stats(filepath: str) -> int:
 #   <Points>  vs. <OpponentName>  <OppPoints>  <W>  <L>
 #   ...
 
-def parse_results_by_team(filepath: str) -> int:
+def parse_results_by_team(filepath: str, tournament_id: int = None) -> int:
     text = _extract_text(filepath)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
@@ -191,9 +191,9 @@ def parse_results_by_team(filepath: str) -> int:
 
             cur.execute("""
                 INSERT INTO team_game_results
-                    (team_id, opponent_id, points_for, points_against, win, room)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (current_team_id, opp_id, pts_for, pts_against, win, current_room))
+                    (tournament_id, team_id, opponent_id, points_for, points_against, win, room)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (tournament_id, current_team_id, opp_id, pts_for, pts_against, win, current_room))
             rows_inserted += 1
             continue
 
@@ -214,7 +214,7 @@ def parse_results_by_team(filepath: str) -> int:
 #   "Team  Wins  Losses  TotalPoints  TotalOppPts"
 #   <TeamName>  <W>  <L>  <TotalPts>  <TotalOppPts>
 
-def parse_round_robin(filepath: str) -> int:
+def parse_round_robin(filepath: str, tournament_id: int = None) -> int:
     text = _extract_text(filepath)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
@@ -254,9 +254,9 @@ def parse_round_robin(filepath: str) -> int:
             if not cur.fetchone():
                 cur.execute("""
                     INSERT INTO standings
-                        (team_id, room, wins, losses, total_points, total_opp_pts)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (team_id, current_room, wins, losses, total_pts, total_opp))
+                        (tournament_id, team_id, room, wins, losses, total_points, total_opp_pts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (tournament_id, team_id, current_room, wins, losses, total_pts, total_opp))
                 rows_inserted += 1
 
     conn.commit()
@@ -272,7 +272,7 @@ def parse_round_robin(filepath: str) -> int:
 #   "12 12 Tuskegee 650 Paine College 10"
 #   "13 13 Alabama State 300 Tuskegee Univ. 470"
 
-def parse_playoff_results(filepath: str) -> int:
+def parse_playoff_results(filepath: str, tournament_id: int = None) -> int:
     text = _extract_text(filepath)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
@@ -304,9 +304,9 @@ def parse_playoff_results(filepath: str) -> int:
 
             cur.execute("""
                 INSERT INTO playoff_results
-                    (game_number, team1_id, team1_score, team2_id, team2_score)
-                VALUES (?, ?, ?, ?, ?)
-            """, (game_num, t1_id, t1_score, t2_id, t2_score))
+                    (tournament_id, game_number, team1_id, team1_score, team2_id, team2_score)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (tournament_id, game_num, t1_id, t1_score, t2_id, t2_score))
             rows_inserted += 1
 
     conn.commit()
@@ -318,32 +318,32 @@ def parse_playoff_results(filepath: str) -> int:
 # Convenience: parse all four summary PDFs at once
 # ---------------------------------------------------------------------------
 
-def parse_all_summaries(results_dir: str) -> dict:
+def parse_all_summaries(results_dir: str, tournament_id: int = None) -> dict:
+    """
+    Auto-detect summary PDFs in results_dir by matching keywords in filenames.
+    Works for any NQT site regardless of filename prefix (ASU, WSSU, VSU, etc.)
+    """
     import os
-    files = {
-        "player_stats": "ASUPlayerStats.pdf",
-        "results_by_team": "ASUResultsByTeam.pdf",
-        "round_robin": "ASURoundRobinResults.pdf",
-        "playoff": "ASUPlayoffResults.pdf",
+    keyword_map = {
+        "playerstats":    ("player_stats",    parse_player_stats),
+        "resultsbyteam":  ("results_by_team", parse_results_by_team),
+        "roundrobin":     ("round_robin",     parse_round_robin),
+        "playoffresults": ("playoff",         parse_playoff_results),
     }
     counts = {}
-    for key, fname in files.items():
-        path = os.path.join(results_dir, fname)
-        if not os.path.exists(path):
-            print(f"[SKIP] {fname} not found")
+    for fname in sorted(os.listdir(results_dir)):
+        if not fname.lower().endswith(".pdf"):
             continue
-        try:
-            if key == "player_stats":
-                n = parse_player_stats(path)
-            elif key == "results_by_team":
-                n = parse_results_by_team(path)
-            elif key == "round_robin":
-                n = parse_round_robin(path)
-            elif key == "playoff":
-                n = parse_playoff_results(path)
-            counts[key] = n
-            print(f"[OK] {fname} -> {n} rows inserted")
-        except Exception as e:
-            print(f"[ERR] {fname}: {e}")
-            counts[key] = f"error: {e}"
+        normalized = fname.lower().replace(" ", "").replace("_", "").replace("-", "")
+        for keyword, (key, fn) in keyword_map.items():
+            if keyword in normalized:
+                path = os.path.join(results_dir, fname)
+                try:
+                    n = fn(path, tournament_id=tournament_id)
+                    counts[key] = n
+                    print(f"[OK] {fname} -> {n} rows inserted")
+                except Exception as e:
+                    print(f"[ERR] {fname}: {e}")
+                    counts[key] = f"error: {e}"
+                break
     return counts
