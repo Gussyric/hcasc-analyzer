@@ -5,7 +5,7 @@ from database import get_connection
 from config import MIN_SAMPLE_SIZE
 
 
-def get_player_category_stats(player_id: int) -> dict:
+def get_player_category_stats(player_id: int, tournament_id: int = None) -> dict:
     """
     Returns per-category accuracy stats for a player, sourced from
     player_stats (summary PDF) and game_events (scoresheet data).
@@ -17,28 +17,33 @@ def get_player_category_stats(player_id: int) -> dict:
     cur = conn.cursor()
 
     # From player_stats (summary PDF)
-    cur.execute("""
+    t_filter = "AND tournament_id = ?" if tournament_id else ""
+    t_params = (player_id, tournament_id) if tournament_id else (player_id,)
+    cur.execute(f"""
         SELECT category,
                SUM(questions_heard)    AS heard,
                SUM(buzzed_in)          AS buzzed,
                SUM(answered_correctly) AS correct
         FROM player_stats
-        WHERE player_id = ?
+        WHERE player_id = ? {t_filter}
         GROUP BY category
-    """, (player_id,))
+    """, t_params)
     stats_rows = cur.fetchall()
 
     # From game_events (scoresheet) — supplemental
-    cur.execute("""
-        SELECT category,
+    ge_filter = "AND g.tournament_id = ?" if tournament_id else ""
+    ge_params = (player_id, player_id, player_id, player_id) + ((tournament_id,) if tournament_id else ())
+    cur.execute(f"""
+        SELECT ge.category,
                COUNT(*) AS attempts,
-               SUM(CASE WHEN team1_player_id = ? AND team1_fo_correct = 1 THEN 1
-                        WHEN team2_player_id = ? AND team2_fo_correct = 1 THEN 1
+               SUM(CASE WHEN ge.team1_player_id = ? AND ge.team1_fo_correct = 1 THEN 1
+                        WHEN ge.team2_player_id = ? AND ge.team2_fo_correct = 1 THEN 1
                         ELSE 0 END) AS correct
-        FROM game_events
-        WHERE team1_player_id = ? OR team2_player_id = ?
-        GROUP BY category
-    """, (player_id, player_id, player_id, player_id))
+        FROM game_events ge
+        JOIN games g ON g.id = ge.game_id
+        WHERE (ge.team1_player_id = ? OR ge.team2_player_id = ?) {ge_filter}
+        GROUP BY ge.category
+    """, ge_params)
     event_rows = cur.fetchall()
 
     conn.close()

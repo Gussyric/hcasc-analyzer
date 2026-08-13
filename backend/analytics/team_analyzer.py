@@ -6,7 +6,7 @@ from config import GAP_THRESHOLD
 from analytics.player_analyzer import get_all_players_for_team, get_player_category_stats
 
 
-def get_team_category_coverage(team_id: int) -> dict:
+def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
     """
     For each category, returns the best accuracy among all team players.
     Also flags categories as gaps if best accuracy < GAP_THRESHOLD.
@@ -52,7 +52,7 @@ def get_team_category_coverage(team_id: int) -> dict:
     return coverage
 
 
-def get_team_overview(team_id: int) -> dict:
+def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
     """
     Full team overview dict: players, category coverage, strengths, gaps,
     win/loss record, standings.
@@ -60,33 +60,35 @@ def get_team_overview(team_id: int) -> dict:
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, room FROM teams WHERE id = ?", (team_id,))
+    cur.execute("SELECT id, name FROM teams WHERE id = ?", (team_id,))
     team = cur.fetchone()
     if not team:
         conn.close()
         return {}
 
-    # Win/loss record
-    cur.execute("""
+    # Win/loss record — optionally filtered by tournament
+    t_filter = "AND tournament_id = ?" if tournament_id else ""
+    t_params = (team_id, tournament_id) if tournament_id else (team_id,)
+    cur.execute(f"""
         SELECT SUM(win) AS wins,
                COUNT(*) - SUM(win) AS losses,
                SUM(points_for) AS total_pts,
                SUM(points_against) AS total_opp_pts
         FROM team_game_results
-        WHERE team_id = ?
-    """, (team_id,))
+        WHERE team_id = ? {t_filter}
+    """, t_params)
     record = cur.fetchone()
 
-    # Standings
-    cur.execute("""
+    # Standings — optionally filtered by tournament
+    cur.execute(f"""
         SELECT wins, losses, total_points, total_opp_pts
-        FROM standings WHERE team_id = ?
-    """, (team_id,))
+        FROM standings WHERE team_id = ? {t_filter}
+    """, t_params)
     standing = cur.fetchone()
 
     conn.close()
 
-    coverage = get_team_category_coverage(team_id)
+    coverage = get_team_category_coverage(team_id, tournament_id)
     players = get_all_players_for_team(team_id)
 
     # Compute overall team strength as avg of best-per-category accuracies
@@ -110,7 +112,6 @@ def get_team_overview(team_id: int) -> dict:
     return {
         "id": team["id"],
         "name": team["name"],
-        "room": team["room"],
         "overall_strength": overall_strength,
         "wins": wins,
         "losses": losses,
@@ -128,7 +129,7 @@ def get_all_teams() -> list:
     """Return a summary list of all teams with basic stats."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, room FROM teams ORDER BY name")
+    cur.execute("SELECT id, name FROM teams ORDER BY name")
     rows = cur.fetchall()
     conn.close()
 
@@ -138,7 +139,6 @@ def get_all_teams() -> list:
         teams.append({
             "id": row["id"],
             "name": row["name"],
-            "room": row["room"],
             "overall_strength": overview.get("overall_strength", 0),
             "wins": overview.get("wins", 0),
             "losses": overview.get("losses", 0),
