@@ -89,12 +89,14 @@ def get_uc_recommendation(team_id: int, opponent_id: int = None) -> dict:
     scored = []
     for cat, my_data in my_cats.items():
         my_acc = my_data["avg_accuracy"]
-        # Opponent's accuracy in same category (lower is better for us)
-        opp_data = opp_cats.get(cat, {})
-        opp_acc = opp_data.get("avg_accuracy", 0.5)  # default to 0.5 if unknown
+        # Opponent's accuracy in same category (lower is better for us).
+        # None means the opponent has never played this category — there's
+        # no real number to report, and blending in a guessed value would
+        # quietly bias the score, so we fall back to your own accuracy.
+        opp_data = opp_cats.get(cat)
+        opp_acc = opp_data["avg_accuracy"] if opp_data else None
 
-        # Combined score: maximize my accuracy, minimize opponent's
-        if opponent_id:
+        if opponent_id and opp_acc is not None:
             score = (my_acc * 0.6) + ((1 - opp_acc) * 0.4)
         else:
             score = my_acc
@@ -104,7 +106,9 @@ def get_uc_recommendation(team_id: int, opponent_id: int = None) -> dict:
             "your_accuracy": my_acc,
             "your_avg_points": my_data["avg_points_per_game"],
             "times_selected": my_data["times_selected"],
-            "opponent_accuracy": round(opp_acc, 4) if opponent_id else None,
+            "opponent_accuracy": round(opp_acc, 4) if opp_acc is not None else None,
+            "opponent_times_selected": opp_data["times_selected"] if opp_data else 0,
+            "opponent_has_data": opp_acc is not None,
             "recommendation_score": round(score, 4),
         })
 
@@ -118,11 +122,14 @@ def get_uc_recommendation(team_id: int, opponent_id: int = None) -> dict:
             f"({top['your_accuracy']*100:.1f}% accuracy, "
             f"avg {top['your_avg_points']:.0f} pts/game)."
         )
-        if opponent_id and top["opponent_accuracy"] is not None:
-            reason += (
-                f" Opponent accuracy in this category: "
-                f"{top['opponent_accuracy']*100:.1f}%."
-            )
+        if opponent_id:
+            if top["opponent_accuracy"] is not None:
+                reason += (
+                    f" Opponent accuracy in this category: "
+                    f"{top['opponent_accuracy']*100:.1f}%."
+                )
+            else:
+                reason += " Opponent has no recorded history in this category."
 
     return {
         "recommendation": top,

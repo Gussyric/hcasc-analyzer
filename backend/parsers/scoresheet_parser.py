@@ -15,8 +15,9 @@
 import re
 import os
 import pdfplumber
-from database import get_connection
+from database import get_connection, hash_file, get_imported_file, record_file_import
 from utils.team_names import normalize_team_name
+from config import UC_MAX_POINTS, UC_POINTS_PER_QUESTION, FO_POINTS
 
 
 # ---------------------------------------------------------------------------
@@ -62,16 +63,93 @@ def _get_or_create_player(cur, team_id: int, name: str) -> int:
     return cur.lastrowid
 
 
+def _resolve_round_roster(rest: str, row_left_names: list, row_right_names: list) -> tuple:
+    """
+    Split a round-header line like "Guscott, Omario Parejo Cano, Santiago"
+    into (name1, name2) for the two players declared for that round.
+
+    The line is always two "Last, First" groups concatenated with a space,
+    but when a surname is itself multi-word ("Parejo Cano", "Nti Anokye")
+    the boundary between the groups is ambiguous from the roster line
+    alone — naively walking back one word from the final comma silently
+    misattributes the extra surname word to the wrong player.
+
+    Per-row names (even when truncated by a narrow table column) reliably
+    show which words belong to which side, so they're used to pick the
+    correct split point among candidates (1-word, 2-word, ... walk-back);
+    the roster line then supplies the complete, untruncated name for
+    whichever split satisfies both sides' row evidence. Falls back to the
+    simplest one-word-surname split when no row evidence is available
+    (e.g. a player who never attempted a face-off that round).
+    """
+    comma_positions = [i for i, c in enumerate(rest) if c == ","]
+    if len(comma_positions) < 2:
+        parts = re.split(r"\s{2,}", rest)
+        if len(parts) >= 2:
+            return parts[0].strip(), parts[1].strip()
+        return rest, ""
+
+    left_hint = max((n for n in row_left_names if n), key=len, default="")
+    right_hint = max((n for n in row_right_names if n), key=len, default="")
+
+    def matches(candidate: str, hint: str) -> bool:
+        if not hint:
+            return True  # no row evidence for this side — don't block on it
+        return candidate.startswith(hint) or hint.startswith(candidate)
+
+    last_comma = comma_positions[-1]
+    first_comma = comma_positions[0]
+    candidates = []
+    pos = last_comma
+    while True:
+        word_start = pos
+        while word_start > 0 and rest[word_start - 1] not in (" ", "\t"):
+            word_start -= 1
+        if word_start <= first_comma:
+            break
+        candidates.append(word_start)
+        pos = word_start - 1
+        if len(candidates) >= 4:  # sane upper bound on compound-surname length
+            break
+
+    for word_start in candidates:
+        name1 = rest[:word_start].strip()
+        name2 = rest[word_start:].strip()
+        if matches(name1, left_hint) and matches(name2, right_hint):
+            return name1, name2
+
+    # No candidate satisfied both hints — fall back to the simplest split.
+    word_start = candidates[0] if candidates else last_comma
+    return rest[:word_start].strip(), rest[word_start:].strip()
+
+
 # ---------------------------------------------------------------------------
 # Main parse function
 # ---------------------------------------------------------------------------
 
-def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
+def parse_scoresheet(filepath: str, tournament_id: int = None, force: bool = False) -> dict:
     """
     Parse a single scoresheet PDF.
     Returns a summary dict with game metadata and row counts.
     Inserts all data into the SQLite database.
+
+    Skips (no-op) if this exact file's contents were already imported,
+    unless force=True.
     """
+    file_hash = hash_file(filepath)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if not force:
+        existing = get_imported_file(cur, file_hash)
+        if existing:
+            conn.close()
+            return {
+                "file": os.path.basename(filepath),
+                "skipped": True,
+                "reason": f"already imported at {existing['imported_at']}",
+            }
+
     with pdfplumber.open(filepath) as pdf:
         full_text = "\n".join(
             page.extract_text() or "" for page in pdf.pages
@@ -104,7 +182,13 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
             team2_name = m.group(2).strip()
 
     # -------------------------------------------------------------------------
-    # 2. Extract per-round player rosters
+    # 2. Parse face-off event rows (needed first — see step 3 below)
+    # -------------------------------------------------------------------------
+    # Split full text into sections by round headers and UC section
+    sections = _split_into_sections(lines)
+
+    # -------------------------------------------------------------------------
+    # 3. Extract per-round player rosters
     #    Lines like: "Round 1  Nti Anokye, John  Trayvick, Jeremia"
     # -------------------------------------------------------------------------
     round_rosters = {}  # round_number -> (team1_player_name, team2_player_name)
@@ -113,30 +197,10 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
         if m:
             rnd = int(m.group(1))
             rest = m.group(2).strip()
-            # Split the two player names. Both are typically "Lastname, Firstname".
-            # Find the second name by locating the space before the second comma-group.
-            comma_positions = [i for i, c in enumerate(rest) if c == ","]
-            name1, name2 = rest, ""
-            if len(comma_positions) >= 2:
-                for cp in comma_positions[1:]:
-                    word_start = cp
-                    while word_start > 0 and rest[word_start - 1] not in (" ", "\t"):
-                        word_start -= 1
-                    if word_start > 0:
-                        name1 = rest[:word_start].strip()
-                        name2 = rest[word_start:].strip()
-                        break
-            else:
-                parts = re.split(r"\s{2,}", rest)
-                if len(parts) >= 2:
-                    name1, name2 = parts[0].strip(), parts[1].strip()
-            round_rosters[rnd] = (name1, name2)
-
-    # -------------------------------------------------------------------------
-    # 3. Parse face-off event rows
-    # -------------------------------------------------------------------------
-    # Split full text into sections by round headers and UC section
-    sections = _split_into_sections(lines)
+            rows = sections.get(rnd, [])
+            left_hints = [row.get("left_player", "") for row in rows]
+            right_hints = [row.get("right_player", "") for row in rows]
+            round_rosters[rnd] = _resolve_round_roster(rest, left_hints, right_hints)
 
     # -------------------------------------------------------------------------
     # 4. Parse Ultimate Challenge
@@ -144,11 +208,8 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
     uc_data = _parse_uc_section(lines)
 
     # -------------------------------------------------------------------------
-    # 5. Database writes
+    # 5. Database writes  (conn/cur opened above for the dedup check)
     # -------------------------------------------------------------------------
-    conn = get_connection()
-    cur = conn.cursor()
-
     team1_id = _get_or_create_team(cur, team1_name, room)
     team2_id = _get_or_create_team(cur, team2_name, room)
 
@@ -167,9 +228,15 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
 
     event_count = 0
     for rnd, event_rows in sections.items():
-        t1_player_name, t2_player_name = round_rosters.get(rnd, ("", ""))
-        t1_player_id = _get_or_create_player(cur, team1_id, t1_player_name)
-        t2_player_id = _get_or_create_player(cur, team2_id, t2_player_name)
+        # A round has exactly one player per side; round_rosters already
+        # resolved the correct, complete name for each using row evidence
+        # (see _resolve_round_roster), so every row in the round shares it —
+        # a row's own name field is often just a truncated/garbled render of
+        # the same person (narrow table column, or a stray bonus token).
+        t1_name, t2_name = round_rosters.get(rnd, ("", ""))
+
+        t1_player_id = _get_or_create_player(cur, team1_id, t1_name)
+        t2_player_id = _get_or_create_player(cur, team2_id, t2_name)
 
         for row in event_rows:
             # Determine which side answered the FO
@@ -180,11 +247,8 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
             t1_correct = 1 if t1_fo > 0 else 0
             t2_correct = 1 if t2_fo > 0 else 0
 
-            # Use the player who actually answered if named, else round default
-            left_name = row.get("left_player", "")
-            right_name = row.get("right_player", "")
-            pid1 = _get_or_create_player(cur, team1_id, left_name) if left_name else t1_player_id
-            pid2 = _get_or_create_player(cur, team2_id, right_name) if right_name else t2_player_id
+            pid1 = t1_player_id
+            pid2 = t2_player_id
 
             cur.execute("""
                 INSERT INTO game_events
@@ -208,11 +272,14 @@ def parse_scoresheet(filepath: str, tournament_id: int = None) -> dict:
         """, (game_id, team_id, uc["category"], uc["points"],
               uc["questions_correct"], 10, uc["correct_q_numbers"]))
 
+    record_file_import(cur, file_hash, os.path.basename(filepath), "scoresheet", tournament_id)
+
     conn.commit()
     conn.close()
 
     return {
         "file": os.path.basename(filepath),
+        "skipped": False,
         "match": match_number,
         "game": game_number,
         "room": room,
@@ -270,10 +337,18 @@ def _split_into_sections(lines: list) -> dict:
     return sections
 
 
+_YEAR_RE = re.compile(r'^(19|20)\d{2}$')
+
+
 def _parse_event_line(line: str) -> dict | None:
     """
     Parse a single face-off data row using single-space token splitting.
     Layout: RunScore [LeftPlayer] LeftFO [LeftBonus] Q# CATEGORY RightFO [RightBonus] [RightPlayer] RunScore
+
+    A category can itself contain a bare year, leading ("2025 EMMY AWARDS")
+    or trailing ("DATELINE: 1926") — normally any all-digit token ends the
+    category / marks where the Q# is, so a category-embedded year is
+    allowed exactly once as an exception to that rule.
     """
     tokens = line.split()
     if len(tokens) < 4:
@@ -281,11 +356,15 @@ def _parse_event_line(line: str) -> dict | None:
     if not tokens[0].isdigit() or not tokens[-1].isdigit():
         return None
 
-    # Find Q# index: integer whose next token starts with an uppercase letter
+    # Find Q# index: integer whose next token starts with an uppercase
+    # letter, OR whose next token is a year immediately followed by an
+    # uppercase-starting token (a leading-year category).
     q_idx = None
     for i in range(1, len(tokens) - 1):
         if tokens[i].isdigit():
-            if i + 1 < len(tokens) and re.search(r'[A-Z]', tokens[i + 1]):
+            nxt = tokens[i + 1]
+            nxt2 = tokens[i + 2] if i + 2 < len(tokens) else ""
+            if re.search(r'[A-Z]', nxt) or (_YEAR_RE.match(nxt) and re.search(r'[A-Z]', nxt2)):
                 q_idx = i
                 break
 
@@ -294,11 +373,17 @@ def _parse_event_line(line: str) -> dict | None:
 
     q_num = int(tokens[q_idx])
 
-    # Category: all tokens from q_idx+1 until we hit a numeric/bonus token
+    # Category: all tokens from q_idx+1 until we hit a numeric/bonus token,
+    # allowing exactly one embedded year to pass through un-ended.
     cat_end = q_idx + 1
+    year_consumed = False
     while cat_end < len(tokens) - 1:
         t = tokens[cat_end]
-        if t.isdigit() or re.match(r'\d+/\d+=\d+', t) or re.match(r'\d+/\d+$', t):
+        if not year_consumed and _YEAR_RE.match(t):
+            year_consumed = True
+            cat_end += 1
+            continue
+        if t.isdigit() or re.match(r'\d+(?:/\d+)+=\d+', t) or re.match(r'\d+(?:/\d+)+$', t):
             break
         cat_end += 1
     category = " ".join(tokens[q_idx + 1:cat_end])
@@ -308,6 +393,12 @@ def _parse_event_line(line: str) -> dict | None:
 
     left_player, left_fo, left_bonus = _parse_side(left_tokens)
     right_player, right_fo, right_bonus = _parse_side(right_tokens)
+
+    # FO points are a fixed game constant (0 or FO_POINTS) — anything else
+    # means the row's tokens got misaligned (e.g. a bare-numeric category
+    # like "1998" with no letter to anchor on) and the row is unreliable.
+    if left_fo not in (0, FO_POINTS) or right_fo not in (0, FO_POINTS):
+        return None
 
     return {
         "q_num": q_num,
@@ -322,18 +413,31 @@ def _parse_event_line(line: str) -> dict | None:
 
 
 def _parse_side(tokens: list) -> tuple:
-    """Extract (player_name, fo_points, bonus_points) from one side's tokens."""
+    """
+    Extract (player_name, fo_points, bonus_points) from one side's tokens.
+
+    Bonus is usually a fraction-format token ("10/0=10"), but sometimes
+    shows up as a second bare number instead (e.g. "10 20" or "10 5") —
+    the first bare digit token is always FO points, and a second one (if
+    any) is the bonus, rather than the second silently overwriting the
+    first.
+    """
     player_parts = []
     fo = 0
     bonus = 0
+    seen_plain_digit = False
     for tok in tokens:
-        if re.match(r'\d+/\d+=\d+', tok) or re.match(r'\d+/\d+$', tok):
+        if re.match(r'\d+(?:/\d+)+=\d+', tok) or re.match(r'\d+(?:/\d+)+$', tok):
             m = re.search(r'=(\d+)', tok)
             bonus = int(m.group(1)) if m else 0
         elif tok == "0":
             continue
         elif tok.lstrip('-').isdigit():
-            fo = int(tok)
+            if not seen_plain_digit:
+                fo = int(tok)
+                seen_plain_digit = True
+            else:
+                bonus = int(tok)
         else:
             player_parts.append(tok)
     player = " ".join(player_parts).strip()
@@ -353,6 +457,15 @@ def _parse_uc_section(lines: list) -> dict:
     Line format: 'CAT1 score1 score2 CAT2'
     Then: '1 /2 /6 / 1 /3 /5 /'
     Then: 'SCORE_LEFT  Final Score:  SCORE_RIGHT'
+
+    The "1 /2 /6 / 1 /3 /5 /" line has no reliable whitespace boundary
+    between the two sides' number lists in the extracted text (pdfplumber
+    collapses the gap to the same single space used between numbers within
+    a side), and can even drop digits entirely. So it's used only to
+    populate the display string of which questions were answered
+    correctly, on a best-effort basis — the authoritative correct-answer
+    COUNT is derived from points_scored, since UC is flat
+    UC_POINTS_PER_QUESTION points per correct answer.
     """
     uc_start = None
     for i, line in enumerate(lines):
@@ -384,53 +497,51 @@ def _parse_uc_section(lines: list) -> dict:
 
         # Question numbers line: contains slashes
         if "/" in line:
-            # Split the line roughly in half to get left/right sides
-            # Find the midpoint by looking for a gap after the first run of q-nums
-            halves = re.split(r"\s{2,}", line)
-            if len(halves) >= 2:
-                q_numbers = [halves[0].strip(), halves[1].strip()]
-            else:
-                # Try to split by finding two runs of "N /" patterns
-                left_q = re.findall(r"(\d+\s*/)", line)
-                mid = len(left_q) // 2
-                q_numbers = [
-                    " ".join(left_q[:mid]),
-                    " ".join(left_q[mid:]),
-                ]
+            q_numbers = re.findall(r"(\d+)\s*/", line)
             continue
 
-        # Category + scores line: "CAT1 score1 score2 CAT2"
+        # Category + scores line: "CAT1 score1 score2 CAT2". A category
+        # name can itself contain a number (e.g. "WORLD CUP 2026"), so the
+        # first adjacent-number pair isn't necessarily the real scores —
+        # only a pair that are both valid UC point totals is trusted.
         if not cat1 and re.search(r"[A-Z]", line):
             matches = list(re.finditer(r"\b(\d+)\b", line))
-            if len(matches) >= 2:
-                for i in range(len(matches) - 1):
-                    m1, m2 = matches[i], matches[i + 1]
-                    between = line[m1.end():m2.start()].strip()
-                    if between == "":
-                        cat1 = line[:m1.start()].strip()
-                        score1 = int(m1.group(1))
-                        score2 = int(m2.group(1))
-                        cat2 = line[m2.end():].strip()
-                        break
+            for i in range(len(matches) - 1):
+                m1, m2 = matches[i], matches[i + 1]
+                between = line[m1.end():m2.start()].strip()
+                v1, v2 = int(m1.group(1)), int(m2.group(1))
+                valid = (0 <= v1 <= UC_MAX_POINTS and v1 % UC_POINTS_PER_QUESTION == 0
+                         and 0 <= v2 <= UC_MAX_POINTS and v2 % UC_POINTS_PER_QUESTION == 0)
+                if between == "" and valid:
+                    cat1 = line[:m1.start()].strip()
+                    score1, score2 = v1, v2
+                    cat2 = line[m2.end():].strip()
+                    break
 
-    # Build uc_events
-    def q_list(q_str):
-        return [x.strip() for x in re.split(r"[/\s]+", q_str) if x.strip().isdigit()]
+    # Correct-answer counts come from points, not the fragile q-numbers
+    # line (see docstring) — points are cleanly parsed and always a
+    # multiple of UC_POINTS_PER_QUESTION.
+    count1 = score1 // UC_POINTS_PER_QUESTION
+    count2 = score2 // UC_POINTS_PER_QUESTION
+
+    # Best-effort split of the raw question-number list using those counts.
+    left_q_numbers = q_numbers[:count1]
+    right_q_numbers = q_numbers[count1:count1 + count2]
 
     uc_events = [
         {
             "side": "left",
             "category": cat1,
             "points": score1,
-            "questions_correct": len(q_list(q_numbers[0] if q_numbers else "")),
-            "correct_q_numbers": ",".join(q_list(q_numbers[0] if q_numbers else "")),
+            "questions_correct": count1,
+            "correct_q_numbers": ",".join(left_q_numbers),
         },
         {
             "side": "right",
             "category": cat2,
             "points": score2,
-            "questions_correct": len(q_list(q_numbers[1] if len(q_numbers) > 1 else "")),
-            "correct_q_numbers": ",".join(q_list(q_numbers[1] if len(q_numbers) > 1 else "")),
+            "questions_correct": count2,
+            "correct_q_numbers": ",".join(right_q_numbers),
         },
     ]
 
@@ -457,8 +568,11 @@ def parse_all_scoresheets(directory: str, tournament_id: int = None) -> list:
         try:
             result = parse_scoresheet(path, tournament_id=tournament_id)
             results.append(result)
-            print(f"[OK] {fname} -> {result['team1']} {result['team1_score']} - "
-                  f"{result['team2']} {result['team2_score']}")
+            if result.get("skipped"):
+                print(f"[SKIP] {fname} -> {result['reason']}")
+            else:
+                print(f"[OK] {fname} -> {result['team1']} {result['team1_score']} - "
+                      f"{result['team2']} {result['team2_score']}")
         except Exception as e:
             print(f"[ERR] {fname}: {e}")
             results.append({"file": fname, "error": str(e)})

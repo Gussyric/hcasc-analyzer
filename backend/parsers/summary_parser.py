@@ -5,9 +5,10 @@
 #   - ASURoundRobinResults.pdf
 #   - ASUPlayoffResults.pdf
 
+import os
 import re
 import pdfplumber
-from database import get_connection
+from database import get_connection, hash_file, get_imported_file, record_file_import
 from utils.team_names import normalize_team_name
 
 
@@ -54,13 +55,22 @@ def _extract_text(filepath: str) -> str:
 #   ...
 #   "Totals  <heard>  <buzzed>  <correct>  <pct%>"
 
-def parse_player_stats(filepath: str, tournament_id: int = None) -> int:
-    """Parse ASUPlayerStats.pdf. Returns number of stat rows inserted."""
-    text = _extract_text(filepath)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-
+def parse_player_stats(filepath: str, tournament_id: int = None, force: bool = False) -> dict:
+    """Parse a PlayerStats.pdf. Returns {"rows_inserted": int, "skipped": bool}.
+    Skips (no-op) if this exact file's contents were already imported."""
     conn = get_connection()
     cur = conn.cursor()
+
+    file_hash = hash_file(filepath)
+    if not force:
+        existing = get_imported_file(cur, file_hash)
+        if existing:
+            conn.close()
+            return {"rows_inserted": 0, "skipped": True,
+                    "reason": f"already imported at {existing['imported_at']}"}
+
+    text = _extract_text(filepath)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     current_team_id = None
     current_player_id = None
@@ -141,9 +151,10 @@ def parse_player_stats(filepath: str, tournament_id: int = None) -> int:
 
         i += 1
 
+    record_file_import(cur, file_hash, os.path.basename(filepath), "player_stats", tournament_id)
     conn.commit()
     conn.close()
-    return rows_inserted
+    return {"rows_inserted": rows_inserted, "skipped": False}
 
 
 # ---------------------------------------------------------------------------
@@ -155,12 +166,20 @@ def parse_player_stats(filepath: str, tournament_id: int = None) -> int:
 #   <Points>  vs. <OpponentName>  <OppPoints>  <W>  <L>
 #   ...
 
-def parse_results_by_team(filepath: str, tournament_id: int = None) -> int:
-    text = _extract_text(filepath)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-
+def parse_results_by_team(filepath: str, tournament_id: int = None, force: bool = False) -> dict:
     conn = get_connection()
     cur = conn.cursor()
+
+    file_hash = hash_file(filepath)
+    if not force:
+        existing = get_imported_file(cur, file_hash)
+        if existing:
+            conn.close()
+            return {"rows_inserted": 0, "skipped": True,
+                    "reason": f"already imported at {existing['imported_at']}"}
+
+    text = _extract_text(filepath)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     current_room = None
     current_team_id = None
@@ -189,21 +208,28 @@ def parse_results_by_team(filepath: str, tournament_id: int = None) -> int:
 
             opp_id = _get_or_create_team(cur, opp_name, current_room)
 
+            # Deduplicate
             cur.execute("""
-                INSERT INTO team_game_results
-                    (tournament_id, team_id, opponent_id, points_for, points_against, win, room)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (tournament_id, current_team_id, opp_id, pts_for, pts_against, win, current_room))
-            rows_inserted += 1
+                SELECT id FROM team_game_results
+                WHERE tournament_id IS ? AND team_id=? AND opponent_id=? AND room=?
+            """, (tournament_id, current_team_id, opp_id, current_room))
+            if not cur.fetchone():
+                cur.execute("""
+                    INSERT INTO team_game_results
+                        (tournament_id, team_id, opponent_id, points_for, points_against, win, room)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (tournament_id, current_team_id, opp_id, pts_for, pts_against, win, current_room))
+                rows_inserted += 1
             continue
 
         # Team name header (no digits, not a skip line)
         if not re.search(r"\d", line) and line not in SKIP and len(line) > 2:
             current_team_id = _get_or_create_team(cur, line, current_room)
 
+    record_file_import(cur, file_hash, os.path.basename(filepath), "results_by_team", tournament_id)
     conn.commit()
     conn.close()
-    return rows_inserted
+    return {"rows_inserted": rows_inserted, "skipped": False}
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +240,20 @@ def parse_results_by_team(filepath: str, tournament_id: int = None) -> int:
 #   "Team  Wins  Losses  TotalPoints  TotalOppPts"
 #   <TeamName>  <W>  <L>  <TotalPts>  <TotalOppPts>
 
-def parse_round_robin(filepath: str, tournament_id: int = None) -> int:
-    text = _extract_text(filepath)
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-
+def parse_round_robin(filepath: str, tournament_id: int = None, force: bool = False) -> dict:
     conn = get_connection()
     cur = conn.cursor()
+
+    file_hash = hash_file(filepath)
+    if not force:
+        existing = get_imported_file(cur, file_hash)
+        if existing:
+            conn.close()
+            return {"rows_inserted": 0, "skipped": True,
+                    "reason": f"already imported at {existing['imported_at']}"}
+
+    text = _extract_text(filepath)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     current_room = None
     rows_inserted = 0
@@ -249,8 +283,8 @@ def parse_round_robin(filepath: str, tournament_id: int = None) -> int:
 
             # Deduplicate
             cur.execute("""
-                SELECT id FROM standings WHERE team_id=? AND room=?
-            """, (team_id, current_room))
+                SELECT id FROM standings WHERE tournament_id IS ? AND team_id=? AND room=?
+            """, (tournament_id, team_id, current_room))
             if not cur.fetchone():
                 cur.execute("""
                     INSERT INTO standings
@@ -259,9 +293,10 @@ def parse_round_robin(filepath: str, tournament_id: int = None) -> int:
                 """, (tournament_id, team_id, current_room, wins, losses, total_pts, total_opp))
                 rows_inserted += 1
 
+    record_file_import(cur, file_hash, os.path.basename(filepath), "round_robin", tournament_id)
     conn.commit()
     conn.close()
-    return rows_inserted
+    return {"rows_inserted": rows_inserted, "skipped": False}
 
 
 # ---------------------------------------------------------------------------
@@ -272,12 +307,21 @@ def parse_round_robin(filepath: str, tournament_id: int = None) -> int:
 #   "12 12 Tuskegee 650 Paine College 10"
 #   "13 13 Alabama State 300 Tuskegee Univ. 470"
 
-def parse_playoff_results(filepath: str, tournament_id: int = None) -> int:
+def parse_playoff_results(filepath: str, tournament_id: int = None, force: bool = False) -> dict:
+    conn = get_connection()
+    cur = conn.cursor()
+
+    file_hash = hash_file(filepath)
+    if not force:
+        existing = get_imported_file(cur, file_hash)
+        if existing:
+            conn.close()
+            return {"rows_inserted": 0, "skipped": True,
+                    "reason": f"already imported at {existing['imported_at']}"}
+
     text = _extract_text(filepath)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    conn = get_connection()
-    cur = conn.cursor()
     rows_inserted = 0
 
     SKIP = {"Playoff Results", "HCASC National Qualifying Tournament",
@@ -302,16 +346,22 @@ def parse_playoff_results(filepath: str, tournament_id: int = None) -> int:
             t1_id = _get_or_create_team(cur, t1_name)
             t2_id = _get_or_create_team(cur, t2_name)
 
+            # Deduplicate
             cur.execute("""
-                INSERT INTO playoff_results
-                    (tournament_id, game_number, team1_id, team1_score, team2_id, team2_score)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (tournament_id, game_num, t1_id, t1_score, t2_id, t2_score))
-            rows_inserted += 1
+                SELECT id FROM playoff_results WHERE tournament_id IS ? AND game_number=?
+            """, (tournament_id, game_num))
+            if not cur.fetchone():
+                cur.execute("""
+                    INSERT INTO playoff_results
+                        (tournament_id, game_number, team1_id, team1_score, team2_id, team2_score)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (tournament_id, game_num, t1_id, t1_score, t2_id, t2_score))
+                rows_inserted += 1
 
+    record_file_import(cur, file_hash, os.path.basename(filepath), "playoff", tournament_id)
     conn.commit()
     conn.close()
-    return rows_inserted
+    return {"rows_inserted": rows_inserted, "skipped": False}
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +389,12 @@ def parse_all_summaries(results_dir: str, tournament_id: int = None) -> dict:
             if keyword in normalized:
                 path = os.path.join(results_dir, fname)
                 try:
-                    n = fn(path, tournament_id=tournament_id)
-                    counts[key] = n
-                    print(f"[OK] {fname} -> {n} rows inserted")
+                    result = fn(path, tournament_id=tournament_id)
+                    counts[key] = result["rows_inserted"]
+                    if result.get("skipped"):
+                        print(f"[SKIP] {fname} -> {result['reason']}")
+                    else:
+                        print(f"[OK] {fname} -> {result['rows_inserted']} rows inserted")
                 except Exception as e:
                     print(f"[ERR] {fname}: {e}")
                     counts[key] = f"error: {e}"

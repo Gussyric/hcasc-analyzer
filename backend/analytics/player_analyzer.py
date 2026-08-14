@@ -112,6 +112,79 @@ def get_player_overall_strength(player_id: int) -> float:
     return round(weighted_sum / total_weight, 4)
 
 
+def get_player_points_breakdown(player_id: int) -> dict:
+    """
+    Points a player personally earned (Face-Off + Bonus) per game, and
+    their share of their team's game and season point totals.
+
+    Ultimate Challenge points are NOT included — UC is a single team-wide
+    category pick with no per-player attribution in the source data, so
+    "team total" here means the team's full game/season score while
+    "player points" only ever covers their Face-Off + Bonus contributions.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT team_id FROM players WHERE id = ?", (player_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return {}
+    team_id = row["team_id"]
+
+    cur.execute("""
+        SELECT g.id AS game_id, g.match_number, g.game_number, g.room,
+               g.team1_id, g.team1_score, g.team2_score,
+               t1.name AS team1_name, t2.name AS team2_name,
+               SUM(CASE WHEN ge.team1_player_id = ? THEN ge.team1_fo_pts + ge.team1_bonus_pts
+                        WHEN ge.team2_player_id = ? THEN ge.team2_fo_pts + ge.team2_bonus_pts
+                        ELSE 0 END) AS player_points
+        FROM game_events ge
+        JOIN games g ON g.id = ge.game_id
+        JOIN teams t1 ON t1.id = g.team1_id
+        JOIN teams t2 ON t2.id = g.team2_id
+        WHERE ge.team1_player_id = ? OR ge.team2_player_id = ?
+        GROUP BY g.id
+        ORDER BY g.match_number, g.game_number
+    """, (player_id, player_id, player_id, player_id))
+    game_rows = cur.fetchall()
+
+    per_game = []
+    season_player_points = 0
+    for r in game_rows:
+        is_team1 = r["team1_id"] == team_id
+        team_game_points = r["team1_score"] if is_team1 else r["team2_score"]
+        opponent = r["team2_name"] if is_team1 else r["team1_name"]
+        player_points = r["player_points"] or 0
+        season_player_points += player_points
+        per_game.append({
+            "match": r["match_number"],
+            "game": r["game_number"],
+            "room": r["room"],
+            "opponent": opponent,
+            "player_points": player_points,
+            "team_game_points": team_game_points,
+            "share_of_game": round(player_points / team_game_points, 4) if team_game_points else 0.0,
+        })
+
+    cur.execute("""
+        SELECT SUM(CASE WHEN team1_id = ? THEN team1_score
+                         WHEN team2_id = ? THEN team2_score
+                         ELSE 0 END) AS total
+        FROM games WHERE team1_id = ? OR team2_id = ?
+    """, (team_id, team_id, team_id, team_id))
+    team_season_total = cur.fetchone()["total"] or 0
+
+    conn.close()
+
+    return {
+        "per_game": per_game,
+        "season_player_points": season_player_points,
+        "team_season_total_points": team_season_total,
+        "season_share": round(season_player_points / team_season_total, 4) if team_season_total else 0.0,
+    }
+
+
 def get_player_profile(player_id: int) -> dict:
     """Full player profile dict suitable for API response."""
     conn = get_connection()
@@ -131,6 +204,7 @@ def get_player_profile(player_id: int) -> dict:
 
     category_stats = get_player_category_stats(player_id)
     overall = get_player_overall_strength(player_id)
+    points = get_player_points_breakdown(player_id)
 
     return {
         "id": row["id"],
@@ -139,6 +213,10 @@ def get_player_profile(player_id: int) -> dict:
         "team_name": row["team_name"],
         "overall_strength": overall,
         "category_stats": list(category_stats.values()),
+        "points_per_game": points.get("per_game", []),
+        "season_player_points": points.get("season_player_points", 0),
+        "team_season_total_points": points.get("team_season_total_points", 0),
+        "season_points_share": points.get("season_share", 0.0),
     }
 
 

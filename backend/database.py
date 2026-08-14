@@ -175,9 +175,52 @@ def init_db():
         )
     """)
 
+    # -------------------------------------------------------------------------
+    # imported_files  (dedup guard — one row per PDF ever successfully parsed)
+    # -------------------------------------------------------------------------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS imported_files (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_hash       TEXT    NOT NULL UNIQUE,
+            filename        TEXT,
+            file_type       TEXT,
+            tournament_id   INTEGER REFERENCES tournaments(id),
+            imported_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
     print(f"[DB] Initialized database at '{DATABASE_PATH}'")
+
+
+def hash_file(filepath: str) -> str:
+    """Return the sha256 hex digest of a file's contents — the dedup key
+    for imported_files. Content-based (not filename-based) so a renamed
+    duplicate is still caught and a same-named-but-different file isn't."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_imported_file(cur, file_hash: str):
+    """Return the imported_files row for this hash, or None if never imported."""
+    cur.execute("SELECT * FROM imported_files WHERE file_hash = ?", (file_hash,))
+    return cur.fetchone()
+
+
+def record_file_import(cur, file_hash: str, filename: str, file_type: str,
+                        tournament_id: int = None) -> int:
+    """Mark a file as imported so re-parsing it is a no-op. Call after the
+    parse's own inserts, on the same cursor/transaction, right before commit."""
+    cur.execute("""
+        INSERT INTO imported_files (file_hash, filename, file_type, tournament_id)
+        VALUES (?, ?, ?, ?)
+    """, (file_hash, filename, file_type, tournament_id))
+    return cur.lastrowid
 
 
 def get_or_create_tournament(name: str, type: str, year: int,

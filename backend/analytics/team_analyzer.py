@@ -16,6 +16,7 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
           "CATEGORY_NAME": {
             "best_accuracy": float,
             "best_player": str,
+            "best_buzzed_in": int,   # sample size behind best_accuracy
             "is_gap": bool,
             "player_scores": [{"name": str, "accuracy": float}, ...]
           },
@@ -30,20 +31,27 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
         for cat, stats in cat_stats.items():
             if cat not in coverage:
                 coverage[cat] = {
-                    "best_accuracy": 0.0,
+                    "best_accuracy": None,
                     "best_player": None,
+                    "best_buzzed_in": 0,
                     "is_gap": True,
                     "player_scores": [],
                 }
-            coverage[cat]["player_scores"].append({
+            entry = coverage[cat]
+            entry["player_scores"].append({
                 "player_id": player["id"],
                 "name": player["name"],
                 "accuracy": stats["accuracy"],
                 "buzzed_in": stats["buzzed_in"],
             })
-            if stats["accuracy"] > coverage[cat]["best_accuracy"]:
-                coverage[cat]["best_accuracy"] = stats["accuracy"]
-                coverage[cat]["best_player"] = player["name"]
+            # First player sets the initial "best" even at 0% accuracy, so a
+            # category no one has ever gotten right still carries a real
+            # sample size instead of defaulting to 0 — that sample size is
+            # what get_team_overview weights the strength average by.
+            if entry["best_accuracy"] is None or stats["accuracy"] > entry["best_accuracy"]:
+                entry["best_accuracy"] = stats["accuracy"]
+                entry["best_player"] = player["name"]
+                entry["best_buzzed_in"] = stats["buzzed_in"]
 
     # Determine gaps
     for cat in coverage:
@@ -91,9 +99,18 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
     coverage = get_team_category_coverage(team_id, tournament_id)
     players = get_all_players_for_team(team_id)
 
-    # Compute overall team strength as avg of best-per-category accuracies
-    best_scores = [v["best_accuracy"] for v in coverage.values() if v["best_accuracy"] > 0]
-    overall_strength = round(sum(best_scores) / len(best_scores), 4) if best_scores else 0.0
+    # Compute overall team strength as a weighted average of best-per-category
+    # accuracies. A 0% category is a real result (every player who tried it
+    # got it wrong) and must count toward the average — excluding it would
+    # let a team's worst categories vanish from their own strength score.
+    # Weighted by sample size (best_buzzed_in) so a category backed by 8-10
+    # attempts counts more than one decided by a single lucky/unlucky buzz.
+    total_weight = sum(v["best_buzzed_in"] for v in coverage.values())
+    if total_weight > 0:
+        weighted_sum = sum(v["best_accuracy"] * v["best_buzzed_in"] for v in coverage.values())
+        overall_strength = round(weighted_sum / total_weight, 4)
+    else:
+        overall_strength = 0.0
 
     # Top 3 strongest and weakest categories
     sorted_cats = sorted(coverage.items(), key=lambda x: x[1]["best_accuracy"], reverse=True)

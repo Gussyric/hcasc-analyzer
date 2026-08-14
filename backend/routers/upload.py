@@ -55,22 +55,26 @@ async def upload_pdf(file: UploadFile = File(...)):
         if doc_type == "scoresheet":
             result = parse_scoresheet(tmp_path)
             return JSONResponse(content={
-                "status": "ok",
+                "status": "skipped" if result.get("skipped") else "ok",
                 "type": "scoresheet",
                 "result": result,
             })
         elif doc_type == "player_stats":
-            n = parse_player_stats(tmp_path)
-            return JSONResponse(content={"status": "ok", "type": "player_stats", "rows": n})
+            result = parse_player_stats(tmp_path)
+            return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
+                                          "type": "player_stats", "rows": result["rows_inserted"]})
         elif doc_type == "results_by_team":
-            n = parse_results_by_team(tmp_path)
-            return JSONResponse(content={"status": "ok", "type": "results_by_team", "rows": n})
+            result = parse_results_by_team(tmp_path)
+            return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
+                                          "type": "results_by_team", "rows": result["rows_inserted"]})
         elif doc_type == "round_robin":
-            n = parse_round_robin(tmp_path)
-            return JSONResponse(content={"status": "ok", "type": "round_robin", "rows": n})
+            result = parse_round_robin(tmp_path)
+            return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
+                                          "type": "round_robin", "rows": result["rows_inserted"]})
         elif doc_type == "playoff":
-            n = parse_playoff_results(tmp_path)
-            return JSONResponse(content={"status": "ok", "type": "playoff", "rows": n})
+            result = parse_playoff_results(tmp_path)
+            return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
+                                          "type": "playoff", "rows": result["rows_inserted"]})
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Parse error: {str(e)}")
     finally:

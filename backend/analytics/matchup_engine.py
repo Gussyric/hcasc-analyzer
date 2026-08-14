@@ -21,37 +21,52 @@ def get_head_to_head(team1_id: int, team2_id: int) -> dict:
 
     all_cats = sorted(set(list(t1_coverage.keys()) + list(t2_coverage.keys())))
 
-    # Per-category comparison
+    # Per-category comparison. A category only ends up in all_cats because
+    # ONE of the teams played it at some point — most categories are never
+    # shared between two teams' seasons at all, so "the other team hasn't
+    # played this" is the common case, not the exception. Treating that as
+    # a real 0% would fabricate a skill gap out of a coverage gap, so those
+    # rows are marked "team1_only"/"team2_only" with a null accuracy on the
+    # side with no data, and excluded from the advantage tally and margin.
     category_comparison = []
     t1_advantages = 0
     t2_advantages = 0
     toss_ups = 0
+    no_data_count = 0
 
     for cat in all_cats:
-        t1_acc = t1_coverage.get(cat, {}).get("best_accuracy", 0.0)
-        t2_acc = t2_coverage.get(cat, {}).get("best_accuracy", 0.0)
-        t1_player = t1_coverage.get(cat, {}).get("best_player", "—")
-        t2_player = t2_coverage.get(cat, {}).get("best_player", "—")
+        t1_has_data = cat in t1_coverage
+        t2_has_data = cat in t2_coverage
+        t1_acc = t1_coverage.get(cat, {}).get("best_accuracy") if t1_has_data else None
+        t2_acc = t2_coverage.get(cat, {}).get("best_accuracy") if t2_has_data else None
+        t1_player = t1_coverage.get(cat, {}).get("best_player", "—") if t1_has_data else "—"
+        t2_player = t2_coverage.get(cat, {}).get("best_player", "—") if t2_has_data else "—"
 
-        diff = t1_acc - t2_acc
-        if diff > 0.10:
-            advantage = "team1"
-            t1_advantages += 1
-        elif diff < -0.10:
-            advantage = "team2"
-            t2_advantages += 1
+        if t1_has_data and t2_has_data:
+            diff = t1_acc - t2_acc
+            if diff > 0.10:
+                advantage = "team1"
+                t1_advantages += 1
+            elif diff < -0.10:
+                advantage = "team2"
+                t2_advantages += 1
+            else:
+                advantage = "even"
+                toss_ups += 1
+            margin = round(abs(diff), 4)
         else:
-            advantage = "even"
-            toss_ups += 1
+            advantage = "team1_only" if t1_has_data else "team2_only"
+            margin = None
+            no_data_count += 1
 
         category_comparison.append({
             "category": cat,
-            "team1_accuracy": round(t1_acc, 4),
+            "team1_accuracy": round(t1_acc, 4) if t1_acc is not None else None,
             "team1_best_player": t1_player,
-            "team2_accuracy": round(t2_acc, 4),
+            "team2_accuracy": round(t2_acc, 4) if t2_acc is not None else None,
             "team2_best_player": t2_player,
             "advantage": advantage,
-            "margin": round(abs(diff), 4),
+            "margin": margin,
         })
 
     # Overall strength comparison
@@ -89,6 +104,7 @@ def get_head_to_head(team1_id: int, team2_id: int) -> dict:
             "team1": t1_advantages,
             "team2": t2_advantages,
             "even": toss_ups,
+            "no_data": no_data_count,
         },
         "player_matchups": player_matchups,
         "uc": {
@@ -222,14 +238,21 @@ def _build_scouting_report(t1, t2, cat_comparison, t1_adv, t2_adv,
         report.append(f"{t2_name} holds an overall strength advantage "
                        f"({t2_str*100:.1f}% vs {t1_str*100:.1f}%).")
 
-    # Category dominance
+    # Category dominance — only among categories both teams have actually
+    # played; most categories only ever come up for one side.
+    both_played = t1_adv + t2_adv + sum(
+        1 for c in cat_comparison if c["advantage"] == "even"
+    )
     if t1_adv > t2_adv:
-        report.append(f"{t1_name} leads in {t1_adv} categories vs {t2_adv} for {t2_name}.")
+        report.append(f"{t1_name} leads in {t1_adv} categories vs {t2_adv} for {t2_name} "
+                       f"(of {both_played} both teams have played).")
     elif t2_adv > t1_adv:
-        report.append(f"{t2_name} leads in {t2_adv} categories vs {t1_adv} for {t1_name}.")
+        report.append(f"{t2_name} leads in {t2_adv} categories vs {t1_adv} for {t1_name} "
+                       f"(of {both_played} both teams have played).")
 
-    # Highlight biggest mismatches
-    big_gaps = [c for c in cat_comparison if c["margin"] > 0.30]
+    # Highlight biggest mismatches — only categories both teams have
+    # actually played; margin is None for one-sided ("no data") rows.
+    big_gaps = [c for c in cat_comparison if c["margin"] is not None and c["margin"] > 0.30]
     for gap in big_gaps[:3]:
         winner = t1_name if gap["advantage"] == "team1" else t2_name
         loser = t2_name if gap["advantage"] == "team1" else t1_name

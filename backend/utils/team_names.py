@@ -1,8 +1,46 @@
 # utils/team_names.py
 # Normalizes HCASC team name variants to canonical short names.
-# Covers all 5 NQT 2026 sites: ASU, WSSU, VSU, UDC, PVAM
+# Covers all 6 NQT 2026 sites: ASU, WSSU, VSU, UDC, PVAM, Dillard
 
 CANONICAL_NAMES = {
+    # Alabama A&M
+    "alabama a&m univ.":                "Alabama A & M",
+    "alabama a&m university":           "Alabama A & M",
+    "alabama a & m":                    "Alabama A & M",
+    # Albany State
+    "albany state univ.":               "Albany State",
+    "albany state university":          "Albany State",
+    "albany state":                     "Albany State",
+    # Alcorn State
+    "alcorn state univ.":               "Alcorn State",
+    "alcorn state university":          "Alcorn State",
+    "alcorn state":                     "Alcorn State",
+    # Clark Atlanta
+    "clark atlanta univ.":              "Clark Atlanta",
+    "clark atlanta university":         "Clark Atlanta",
+    "clark atlanta":                    "Clark Atlanta",
+    # Dillard
+    "dillard univ.":                    "Dillard",
+    "dillard university":               "Dillard",
+    "dillard":                          "Dillard",
+    # Fort Valley State
+    "fort valley state univ.":          "Fort Valley",
+    "fort valley state university":     "Fort Valley",
+    "fort valley":                      "Fort Valley",
+    # Jackson State
+    "jackson state univ.":              "Jackson State",
+    "jackson state university":         "Jackson State",
+    "jackson state":                    "Jackson State",
+    # Rust
+    "rust college":                     "Rust",
+    "rust":                             "Rust",
+    # Southern University at New Orleans
+    "southern univ.-new orleans":       "Southern-New Orleans",
+    "southern university-new orleans":  "Southern-New Orleans",
+    "southern-new orleans":             "Southern-New Orleans",
+    # Spelman
+    "spelman college":                  "Spelman",
+    "spelman":                          "Spelman",
     # Alabama State
     "alabama state univ.":              "Alabama State",
     "alabama state university":         "Alabama State",
