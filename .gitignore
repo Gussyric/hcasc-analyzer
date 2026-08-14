@@ -1,20 +1,17 @@
-  # Python
-  __pycache__/
-  *.pyc
-  *.pyo
-  .env
-  venv/
-  *.egg-info/
-  
-  # Database (generated — don't commit)
-  backend/hcasc.db
-  
-  # Node
-  node_modules/
-  frontend/dist/
-  
-  # OS
-  .DS_Store
-  EOF
-**/__pycache__/
-**/*.pyc
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+*.egg-info/
+
+# Database (generated — don't commit)
+backend/hcasc.db
+
+# Node
+node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
