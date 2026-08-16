@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getTeamOverview, uploadPDF } from '../api';
+import { getTeamOverview, uploadPDF, getTournaments } from '../api';
 import TeamSelector from '../components/TeamSelector';
 import CategoryHeatmap from '../components/CategoryHeatmap';
 import StrengthBar from '../components/StrengthBar';
@@ -11,14 +11,21 @@ export default function TeamOverview() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
+  const [tournaments, setTournaments] = useState([]);
+  const [uploadTournamentId, setUploadTournamentId] = useState('');
+  const [viewTournamentId, setViewTournamentId] = useState('');
 
   useEffect(() => {
-    if (!teamId) return;
+    if (!teamId) { setData(null); return; }
     setLoading(true);
-    getTeamOverview(teamId)
+    getTeamOverview(teamId, viewTournamentId || null)
       .then(r => { setData(r.data); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [teamId]);
+  }, [teamId, viewTournamentId]);
+
+  useEffect(() => {
+    getTournaments().then(r => setTournaments(r.data)).catch(() => {});
+  }, []);
 
   async function handleUpload(e) {
     const file = e.target.files[0];
@@ -26,11 +33,11 @@ export default function TeamOverview() {
     setUploading(true);
     setUploadMsg('');
     try {
-      const res = await uploadPDF(file);
+      const res = await uploadPDF(file, uploadTournamentId || null);
       setUploadMsg(`✓ Uploaded: ${res.data.type}`);
       // Refresh if same team is loaded
       if (teamId) {
-        const r = await getTeamOverview(teamId);
+        const r = await getTeamOverview(teamId, viewTournamentId || null);
         setData(r.data);
       }
     } catch {
@@ -55,8 +62,22 @@ export default function TeamOverview() {
       </p>
 
       {/* Upload + Team select row */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 28, flexWrap: 'wrap', alignItems: 'center' }}>
-        <TeamSelector value={teamId} onChange={setTeamId} />
+      <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <TeamSelector value={teamId} onChange={setTeamId} tournamentId={viewTournamentId || null} />
+        <select
+          value={viewTournamentId}
+          onChange={e => setViewTournamentId(e.target.value)}
+          title="Scope the stats below to one tournament instead of the team's all-time aggregate"
+          style={{
+            background: 'var(--surface2)', border: '1px solid var(--accent)',
+            borderRadius: 8, padding: '8px 12px', fontSize: 13, color: 'var(--text)',
+          }}
+        >
+          <option value="">Viewing: All Tournaments</option>
+          {tournaments.map(t => (
+            <option key={t.id} value={t.id}>Viewing: {t.name}</option>
+          ))}
+        </select>
         <label style={{
           background: 'var(--surface2)', border: '1px solid var(--border)',
           borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600,
@@ -64,6 +85,25 @@ export default function TeamOverview() {
           {uploading ? 'Uploading…' : '+ Upload PDF'}
           <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={handleUpload} />
         </label>
+      </div>
+
+      {/* Upload-tagging row — separate from the view filter above */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 28, alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Tag next upload to:</span>
+        <select
+          value={uploadTournamentId}
+          onChange={e => setUploadTournamentId(e.target.value)}
+          title="Which tournament the next uploaded PDF gets attached to"
+          style={{
+            background: 'var(--surface2)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: '6px 10px', fontSize: 12, color: 'var(--text)',
+          }}
+        >
+          <option value="">No tournament (untagged)</option>
+          {tournaments.map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
         {uploadMsg && <span style={{ color: uploadMsg.startsWith('✓') ? 'var(--green)' : 'var(--red)', fontSize: 13 }}>{uploadMsg}</span>}
       </div>
 
@@ -73,11 +113,22 @@ export default function TeamOverview() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
           {/* Top stat cards */}
+          {(() => {
+            const poW = data.playoff_wins || 0;
+            const poL = data.playoff_losses || 0;
+            const hasPlayoffs = poW + poL > 0;
+            const recordSub = hasPlayoffs
+              ? `${data.wins}-${data.losses} RR, ${poW}-${poL} playoffs`
+              : 'round robin';
+            const recordValue = hasPlayoffs
+              ? `${data.wins + poW}W – ${data.losses + poL}L`
+              : `${data.wins}W – ${data.losses}L`;
+            return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
             {[
-              { label: 'Overall Strength', value: `${(data.overall_strength * 100).toFixed(1)}%`, sub: 'avg best-per-category' },
-              { label: 'Record', value: `${data.wins}W – ${data.losses}L`, sub: 'round robin' },
-              { label: 'Points Scored', value: (data.total_points || 0).toLocaleString(), sub: 'total' },
+              { label: 'Overall Strength', value: `${(data.overall_strength * 100).toFixed(1)}%`, sub: 'categories + UC, weighted' },
+              { label: 'Record', value: recordValue, sub: recordSub },
+              { label: 'Points Scored', value: (data.total_points || 0).toLocaleString(), sub: 'round robin' },
               { label: 'Players', value: (data.players || []).length, sub: 'on roster' },
             ].map(s => (
               <div key={s.label} className="card" style={{ textAlign: 'center' }}>
@@ -87,6 +138,8 @@ export default function TeamOverview() {
               </div>
             ))}
           </div>
+            );
+          })()}
 
           {/* Radar + players side by side */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>

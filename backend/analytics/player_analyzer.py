@@ -87,12 +87,12 @@ def get_player_category_stats(player_id: int, tournament_id: int = None) -> dict
     return categories
 
 
-def get_player_overall_strength(player_id: int) -> float:
+def get_player_overall_strength(player_id: int, tournament_id: int = None) -> float:
     """
     Weighted average accuracy across all categories with reliable samples.
     Returns a 0.0-1.0 score.
     """
-    stats = get_player_category_stats(player_id)
+    stats = get_player_category_stats(player_id, tournament_id)
     if not stats:
         return 0.0
 
@@ -185,7 +185,7 @@ def get_player_points_breakdown(player_id: int) -> dict:
     }
 
 
-def get_player_profile(player_id: int) -> dict:
+def get_player_profile(player_id: int, tournament_id: int = None) -> dict:
     """Full player profile dict suitable for API response."""
     conn = get_connection()
     cur = conn.cursor()
@@ -202,8 +202,8 @@ def get_player_profile(player_id: int) -> dict:
     if not row:
         return {}
 
-    category_stats = get_player_category_stats(player_id)
-    overall = get_player_overall_strength(player_id)
+    category_stats = get_player_category_stats(player_id, tournament_id)
+    overall = get_player_overall_strength(player_id, tournament_id)
     points = get_player_points_breakdown(player_id)
 
     return {
@@ -220,7 +220,7 @@ def get_player_profile(player_id: int) -> dict:
     }
 
 
-def get_all_players_for_team(team_id: int) -> list:
+def get_all_players_for_team(team_id: int, tournament_id: int = None) -> list:
     """Return profile dicts for all players on a team, sorted by overall strength."""
     conn = get_connection()
     cur = conn.cursor()
@@ -228,5 +228,5 @@ def get_all_players_for_team(team_id: int) -> list:
     rows = cur.fetchall()
     conn.close()
 
-    profiles = [get_player_profile(r["id"]) for r in rows]
+    profiles = [get_player_profile(r["id"], tournament_id) for r in rows]
     return sorted(profiles, key=lambda p: p.get("overall_strength", 0), reverse=True)

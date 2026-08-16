@@ -4,7 +4,7 @@
 import os
 import shutil
 import tempfile
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 
 from parsers.scoresheet_parser import parse_scoresheet
@@ -38,8 +38,10 @@ def _detect_doc_type(filename: str) -> str:
 
 
 @router.post("/pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    """Upload a single HCASC PDF (scoresheet or summary doc)."""
+async def upload_pdf(file: UploadFile = File(...), tournament_id: int | None = Form(None)):
+    """Upload a single HCASC PDF (scoresheet or summary doc), optionally
+    tagged to a tournament so multi-tournament features (per-site standings,
+    head-to-head history, etc.) work for data uploaded through the UI."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
@@ -53,26 +55,26 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     try:
         if doc_type == "scoresheet":
-            result = parse_scoresheet(tmp_path)
+            result = parse_scoresheet(tmp_path, tournament_id=tournament_id)
             return JSONResponse(content={
                 "status": "skipped" if result.get("skipped") else "ok",
                 "type": "scoresheet",
                 "result": result,
             })
         elif doc_type == "player_stats":
-            result = parse_player_stats(tmp_path)
+            result = parse_player_stats(tmp_path, tournament_id=tournament_id)
             return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
                                           "type": "player_stats", "rows": result["rows_inserted"]})
         elif doc_type == "results_by_team":
-            result = parse_results_by_team(tmp_path)
+            result = parse_results_by_team(tmp_path, tournament_id=tournament_id)
             return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
                                           "type": "results_by_team", "rows": result["rows_inserted"]})
         elif doc_type == "round_robin":
-            result = parse_round_robin(tmp_path)
+            result = parse_round_robin(tmp_path, tournament_id=tournament_id)
             return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
                                           "type": "round_robin", "rows": result["rows_inserted"]})
         elif doc_type == "playoff":
-            result = parse_playoff_results(tmp_path)
+            result = parse_playoff_results(tmp_path, tournament_id=tournament_id)
             return JSONResponse(content={"status": "skipped" if result["skipped"] else "ok",
                                           "type": "playoff", "rows": result["rows_inserted"]})
     except Exception as e:
@@ -82,8 +84,8 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @router.post("/batch-scoresheets")
-async def batch_upload_scoresheets(files: list[UploadFile] = File(...)):
-    """Upload multiple scoresheet PDFs at once."""
+async def batch_upload_scoresheets(files: list[UploadFile] = File(...), tournament_id: int | None = Form(None)):
+    """Upload multiple scoresheet PDFs at once, optionally tagged to a tournament."""
     results = []
     for file in files:
         if not file.filename.lower().endswith(".pdf"):
@@ -95,8 +97,8 @@ async def batch_upload_scoresheets(files: list[UploadFile] = File(...)):
             tmp_path = tmp.name
 
         try:
-            result = parse_scoresheet(tmp_path)
-            results.append({"file": file.filename, "status": "ok", "result": result})
+            result = parse_scoresheet(tmp_path, tournament_id=tournament_id)
+            results.append({"file": file.filename, "status": "skipped" if result.get("skipped") else "ok", "result": result})
         except Exception as e:
             results.append({"file": file.filename, "error": str(e)})
         finally:

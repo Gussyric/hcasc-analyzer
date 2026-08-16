@@ -112,7 +112,14 @@ def get_uc_recommendation(team_id: int, opponent_id: int = None) -> dict:
             "recommendation_score": round(score, 4),
         })
 
-    scored.sort(key=lambda x: x["recommendation_score"], reverse=True)
+    # Ties on recommendation_score are common (e.g. two categories both at
+    # 100% off a single attempt) and previously fell back to whatever
+    # arbitrary order SQLite returned. Break ties by more attempts first
+    # (more evidence behind the number), then by average points/game. A
+    # genuine full tie (identical on both) has no statistically meaningful
+    # winner, so category name is a last-resort tiebreaker purely for a
+    # deterministic, reproducible result rather than a "meaningful" one.
+    scored.sort(key=lambda x: (x["recommendation_score"], x["times_selected"], x["your_avg_points"], x["category"]), reverse=True)
 
     top = scored[0] if scored else None
     reason = ""

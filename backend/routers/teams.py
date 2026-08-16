@@ -10,15 +10,18 @@ router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("/")
-def list_teams():
-    """List all teams with basic stats, sorted by overall strength."""
-    return get_all_teams()
+def list_teams(tournament_id: int = None):
+    """List teams with basic stats, sorted by overall strength.
+    Pass ?tournament_id=X to only list teams that played in that tournament."""
+    return get_all_teams(tournament_id)
 
 
 @router.get("/{team_id}/overview")
-def team_overview(team_id: int):
-    """Full team overview: strength, coverage heatmap, player list, record."""
-    overview = get_team_overview(team_id)
+def team_overview(team_id: int, tournament_id: int = None):
+    """Full team overview: strength, coverage heatmap, player list, record.
+    Pass ?tournament_id=X to scope everything to a single tournament instead
+    of the team's all-time aggregate."""
+    overview = get_team_overview(team_id, tournament_id)
     if not overview:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found.")
     return overview

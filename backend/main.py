@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import upload, teams, players, matchup
+from routers import upload, teams, players, matchup, tournaments
 from config import CATEGORIES
 
 app = FastAPI(
@@ -34,6 +34,7 @@ app.include_router(upload.router)
 app.include_router(teams.router)
 app.include_router(players.router)
 app.include_router(matchup.router)
+app.include_router(tournaments.router)
 
 
 @app.get("/")
@@ -51,6 +52,7 @@ def root():
             "GET  /teams/{id}/ultimate-challenge",
             "GET  /matchup/?team1={id}&team2={id}",
             "GET  /players/{id}",
+            "GET  /tournaments/",
         ],
     }
 

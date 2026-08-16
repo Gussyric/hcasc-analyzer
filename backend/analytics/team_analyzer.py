@@ -23,11 +23,11 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
           ...
         }
     """
-    players = get_all_players_for_team(team_id)
+    players = get_all_players_for_team(team_id, tournament_id)
     coverage = {}
 
     for player in players:
-        cat_stats = get_player_category_stats(player["id"])
+        cat_stats = get_player_category_stats(player["id"], tournament_id)
         for cat, stats in cat_stats.items():
             if cat not in coverage:
                 coverage[cat] = {
@@ -94,10 +94,49 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
     """, t_params)
     standing = cur.fetchone()
 
+    # Playoff record — tracked separately from round-robin (team_game_results
+    # above only covers round-robin; playoff_results has no win/loss column,
+    # so it's derived here from the two scores).
+    pr_filter = "AND tournament_id = ?" if tournament_id else ""
+    pr_params = (team_id, team_id, tournament_id) if tournament_id else (team_id, team_id)
+    cur.execute(f"""
+        SELECT team1_id, team1_score, team2_id, team2_score
+        FROM playoff_results
+        WHERE (team1_id = ? OR team2_id = ?) {pr_filter}
+    """, pr_params)
+    playoff_wins = playoff_losses = playoff_points_for = playoff_points_against = 0
+    for row in cur.fetchall():
+        if row["team1_id"] == team_id:
+            my_score, opp_score = row["team1_score"], row["team2_score"]
+        else:
+            my_score, opp_score = row["team2_score"], row["team1_score"]
+        playoff_points_for += my_score
+        playoff_points_against += opp_score
+        if my_score > opp_score:
+            playoff_wins += 1
+        else:
+            playoff_losses += 1
+
+    # Ultimate Challenge totals — optionally filtered by tournament. UC is
+    # worth up to 500 pts/game (often more than the entire Face-Off round)
+    # but has no per-player attribution, so it can't join the per-category
+    # coverage above; it's folded into overall_strength as one more
+    # sample-weighted term instead.
+    uc_filter = "AND g.tournament_id = ?" if tournament_id else ""
+    uc_params = (team_id, tournament_id) if tournament_id else (team_id,)
+    cur.execute(f"""
+        SELECT SUM(u.questions_correct) AS correct, SUM(u.questions_attempted) AS attempted
+        FROM uc_events u JOIN games g ON g.id = u.game_id
+        WHERE u.team_id = ? {uc_filter}
+    """, uc_params)
+    uc_row = cur.fetchone()
+    uc_correct = uc_row["correct"] or 0
+    uc_attempted = uc_row["attempted"] or 0
+
     conn.close()
 
     coverage = get_team_category_coverage(team_id, tournament_id)
-    players = get_all_players_for_team(team_id)
+    players = get_all_players_for_team(team_id, tournament_id)
 
     # Compute overall team strength as a weighted average of best-per-category
     # accuracies. A 0% category is a real result (every player who tried it
@@ -106,11 +145,14 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
     # Weighted by sample size (best_buzzed_in) so a category backed by 8-10
     # attempts counts more than one decided by a single lucky/unlucky buzz.
     total_weight = sum(v["best_buzzed_in"] for v in coverage.values())
-    if total_weight > 0:
-        weighted_sum = sum(v["best_accuracy"] * v["best_buzzed_in"] for v in coverage.values())
-        overall_strength = round(weighted_sum / total_weight, 4)
-    else:
-        overall_strength = 0.0
+    weighted_sum = sum(v["best_accuracy"] * v["best_buzzed_in"] for v in coverage.values())
+
+    uc_accuracy = round(uc_correct / uc_attempted, 4) if uc_attempted > 0 else None
+    if uc_attempted > 0:
+        weighted_sum += uc_accuracy * uc_attempted
+        total_weight += uc_attempted
+
+    overall_strength = round(weighted_sum / total_weight, 4) if total_weight > 0 else 0.0
 
     # Top 3 strongest and weakest categories
     sorted_cats = sorted(coverage.items(), key=lambda x: x[1]["best_accuracy"], reverse=True)
@@ -139,20 +181,39 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
         "weak_categories": weak_categories,
         "players": players,
         "standings": dict(standing) if standing else {},
+        "uc_accuracy": uc_accuracy,
+        "uc_attempted": uc_attempted,
+        "playoff_wins": playoff_wins,
+        "playoff_losses": playoff_losses,
+        "playoff_points_for": playoff_points_for,
+        "playoff_points_against": playoff_points_against,
     }
 
 
-def get_all_teams() -> list:
-    """Return a summary list of all teams with basic stats."""
+def get_all_teams(tournament_id: int = None) -> list:
+    """
+    Return a summary list of teams with basic stats. Pass tournament_id to
+    only include teams that actually played in that tournament (rather than
+    every team, most of whom never touched a given site).
+    """
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name FROM teams ORDER BY name")
+    if tournament_id:
+        cur.execute("""
+            SELECT DISTINCT t.id, t.name
+            FROM teams t
+            JOIN games g ON (g.team1_id = t.id OR g.team2_id = t.id)
+            WHERE g.tournament_id = ?
+            ORDER BY t.name
+        """, (tournament_id,))
+    else:
+        cur.execute("SELECT id, name FROM teams ORDER BY name")
     rows = cur.fetchall()
     conn.close()
 
     teams = []
     for row in rows:
-        overview = get_team_overview(row["id"])
+        overview = get_team_overview(row["id"], tournament_id)
         teams.append({
             "id": row["id"],
             "name": row["name"],
