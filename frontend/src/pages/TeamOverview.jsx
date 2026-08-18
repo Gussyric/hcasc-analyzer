@@ -117,18 +117,20 @@ export default function TeamOverview() {
             const poW = data.playoff_wins || 0;
             const poL = data.playoff_losses || 0;
             const hasPlayoffs = poW + poL > 0;
+            // wins/losses/total_points from the API are already the combined
+            // (round-robin + playoffs) total — round_robin_* fields exist
+            // separately just for the breakdown text below.
             const recordSub = hasPlayoffs
-              ? `${data.wins}-${data.losses} RR, ${poW}-${poL} playoffs`
+              ? `${data.round_robin_wins}-${data.round_robin_losses} RR, ${poW}-${poL} playoffs`
               : 'round robin';
-            const recordValue = hasPlayoffs
-              ? `${data.wins + poW}W – ${data.losses + poL}L`
-              : `${data.wins}W – ${data.losses}L`;
+            const pointsSub = hasPlayoffs ? 'total (RR + playoffs)' : 'round robin';
+            const totalPoints = (data.total_points || 0) + (data.playoff_points_for || 0);
             return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
             {[
               { label: 'Overall Strength', value: `${(data.overall_strength * 100).toFixed(1)}%`, sub: 'categories + UC, weighted' },
-              { label: 'Record', value: recordValue, sub: recordSub },
-              { label: 'Points Scored', value: (data.total_points || 0).toLocaleString(), sub: 'round robin' },
+              { label: 'Record', value: `${data.wins}W – ${data.losses}L`, sub: recordSub },
+              { label: 'Points Scored', value: totalPoints.toLocaleString(), sub: pointsSub },
               { label: 'Players', value: (data.players || []).length, sub: 'on roster' },
             ].map(s => (
               <div key={s.label} className="card" style={{ textAlign: 'center' }}>

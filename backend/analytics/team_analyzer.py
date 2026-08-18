@@ -8,7 +8,15 @@ from analytics.player_analyzer import get_all_players_for_team, get_player_categ
 
 def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
     """
-    For each category, returns the best accuracy among all team players.
+    For each category, returns the best accuracy among all team players
+    (for coverage/gap-finding — "does someone on this roster know this
+    category" is genuinely a best-player question) AND a pooled team
+    accuracy (total correct / total buzzed-in across every player who's
+    faced it — for get_team_overview's overall_strength, since players are
+    assigned per round, not routed to their specialty category, so a
+    realistic strength estimate needs the whole roster's performance, not
+    just whoever happened to do best).
+
     Also flags categories as gaps if best accuracy < GAP_THRESHOLD.
 
     Returns:
@@ -16,7 +24,9 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
           "CATEGORY_NAME": {
             "best_accuracy": float,
             "best_player": str,
-            "best_buzzed_in": int,   # sample size behind best_accuracy
+            "best_buzzed_in": int,      # sample size behind best_accuracy
+            "team_accuracy": float,     # pooled across all players
+            "team_buzzed_in": int,      # pooled sample size
             "is_gap": bool,
             "player_scores": [{"name": str, "accuracy": float}, ...]
           },
@@ -34,6 +44,8 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
                     "best_accuracy": None,
                     "best_player": None,
                     "best_buzzed_in": 0,
+                    "team_correct": 0,
+                    "team_buzzed_in": 0,
                     "is_gap": True,
                     "player_scores": [],
                 }
@@ -44,18 +56,24 @@ def get_team_category_coverage(team_id: int, tournament_id: int = None) -> dict:
                 "accuracy": stats["accuracy"],
                 "buzzed_in": stats["buzzed_in"],
             })
+            entry["team_correct"] += stats["answered_correctly"]
+            entry["team_buzzed_in"] += stats["buzzed_in"]
             # First player sets the initial "best" even at 0% accuracy, so a
             # category no one has ever gotten right still carries a real
-            # sample size instead of defaulting to 0 — that sample size is
-            # what get_team_overview weights the strength average by.
+            # sample size instead of defaulting to 0.
             if entry["best_accuracy"] is None or stats["accuracy"] > entry["best_accuracy"]:
                 entry["best_accuracy"] = stats["accuracy"]
                 entry["best_player"] = player["name"]
                 entry["best_buzzed_in"] = stats["buzzed_in"]
 
-    # Determine gaps
-    for cat in coverage:
-        coverage[cat]["is_gap"] = coverage[cat]["best_accuracy"] < GAP_THRESHOLD
+    # Determine gaps and finalize the pooled team accuracy
+    for cat, entry in coverage.items():
+        entry["is_gap"] = entry["best_accuracy"] < GAP_THRESHOLD
+        entry["team_accuracy"] = (
+            round(entry["team_correct"] / entry["team_buzzed_in"], 4)
+            if entry["team_buzzed_in"] > 0 else 0.0
+        )
+        del entry["team_correct"]  # internal accumulator, not part of the public shape
 
     return coverage
 
@@ -138,14 +156,21 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
     coverage = get_team_category_coverage(team_id, tournament_id)
     players = get_all_players_for_team(team_id, tournament_id)
 
-    # Compute overall team strength as a weighted average of best-per-category
-    # accuracies. A 0% category is a real result (every player who tried it
-    # got it wrong) and must count toward the average — excluding it would
-    # let a team's worst categories vanish from their own strength score.
-    # Weighted by sample size (best_buzzed_in) so a category backed by 8-10
-    # attempts counts more than one decided by a single lucky/unlucky buzz.
-    total_weight = sum(v["best_buzzed_in"] for v in coverage.values())
-    weighted_sum = sum(v["best_accuracy"] * v["best_buzzed_in"] for v in coverage.values())
+    # Compute overall team strength as a weighted average of pooled
+    # per-category accuracy — total correct / total buzzed-in across every
+    # player who's faced that category, not just whoever did best. Players
+    # are assigned per round in this format, not routed to their specialty
+    # category, so a single star can't be routed to the exact category they
+    # know best; a realistic strength number needs the whole roster's
+    # performance, not its ceiling. (best_accuracy/best_player are kept
+    # as-is for the coverage heatmap and gap-finding above, where "does
+    # someone on this roster know this" is correctly a best-player question.)
+    # A 0% category is a real result and must count toward the average —
+    # excluding it would let a team's worst categories vanish from their
+    # own strength score. Weighted by sample size so a category backed by
+    # 8-10 attempts counts more than one decided by a single lucky buzz.
+    total_weight = sum(v["team_buzzed_in"] for v in coverage.values())
+    weighted_sum = sum(v["team_accuracy"] * v["team_buzzed_in"] for v in coverage.values())
 
     uc_accuracy = round(uc_correct / uc_attempted, 4) if uc_attempted > 0 else None
     if uc_attempted > 0:
@@ -165,15 +190,22 @@ def get_team_overview(team_id: int, tournament_id: int = None) -> dict:
         for k, v in sorted_cats[-3:] if v["is_gap"]
     ]
 
-    wins = record["wins"] or 0 if record else 0
-    losses = record["losses"] or 0 if record else 0
+    round_robin_wins = record["wins"] or 0 if record else 0
+    round_robin_losses = record["losses"] or 0 if record else 0
 
     return {
         "id": team["id"],
         "name": team["name"],
         "overall_strength": overall_strength,
-        "wins": wins,
-        "losses": losses,
+        # wins/losses is the TOTAL record (round-robin + playoffs) — the
+        # single number every page should show by default. Consumers that
+        # want the breakdown use round_robin_wins/losses and
+        # playoff_wins/losses directly instead of re-deriving it themselves,
+        # which is what let Team Overview and Head-to-Head disagree before.
+        "wins": round_robin_wins + playoff_wins,
+        "losses": round_robin_losses + playoff_losses,
+        "round_robin_wins": round_robin_wins,
+        "round_robin_losses": round_robin_losses,
         "total_points": record["total_pts"] or 0 if record else 0,
         "total_opp_points": record["total_opp_pts"] or 0 if record else 0,
         "category_coverage": coverage,
