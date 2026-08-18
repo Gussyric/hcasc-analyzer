@@ -1,16 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* Light mode (default) — Benedict College purple (Pantone 254 C ≈ #981D97)
+   and gold (#FFD700), refined for UI use. */
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface2: #22263a;
-  --border: #2e3350;
-  --accent: #4f8ef7;
-  --accent2: #a78bfa;
-  --green: #34d399;
-  --yellow: #fbbf24;
-  --red: #f87171;
-  --text: #e2e8f0;
-  --muted: #8892a4;
+  --bg: #faf8fb;
+  --surface: #ffffff;
+  --surface2: #f4eef7;
+  --border: #e3d9e8;
+
+  --accent: #981d97;       /* brand purple — primary actions, team1, nav */
+  --accent-soft: #f3e0f3;  /* accent tint for badge backgrounds */
+  --on-accent: #ffffff;    /* text/icon color to use on top of a solid --accent fill */
+  --gold: #a8790a;         /* readable gold for text/icons on light bg */
+  --gold-solid: #ffd700;   /* pure brand gold — fills where contrast allows */
+  --gold-soft: #fbf0d2;    /* gold tint for badge backgrounds */
+
+  --green: #16a34a;
+  --green-soft: #dcfce7;
+  --yellow: #b45309;
+  --yellow-soft: #fef3c7;
+  --red: #dc2626;
+  --red-soft: #fee2e2;
+
+  --text: #201622;
+  --muted: #6b5b73;
   --radius: 12px;
+
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+}
+
+/* Dark mode override */
+:root[data-theme='dark'] {
+  --bg: #150f1a;
+  --surface: #1e1725;
+  --surface2: #291f31;
+  --border: #43324f;
+
+  --accent: #d15fd6;
+  --accent-soft: #3d1f45;
+  --on-accent: #1a0f1d;
+  --gold: #ffd23f;
+  --gold-solid: #ffd23f;
+  --gold-soft: #453611;
+
+  --green: #34d399;
+  --green-soft: #06322a;
+  --yellow: #fbbf24;
+  --yellow-soft: #451a03;
+  --red: #f87171;
+  --red-soft: #450a0a;
+
+  --text: #f0e6f2;
+  --muted: #a596ac;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -18,10 +60,13 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.6;
+  transition: background 0.2s, color 0.2s;
 }
+
+h1, h2, h3 { font-family: var(--font-display); }
 
 a { color: var(--accent); text-decoration: none; }
 
@@ -40,10 +85,11 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 12px;
   font-weight: 600;
 }
-.badge-green  { background: #064e3b; color: var(--green); }
-.badge-yellow { background: #451a03; color: var(--yellow); }
-.badge-red    { background: #450a0a; color: var(--red); }
-.badge-blue   { background: #1e3a5f; color: var(--accent); }
+.badge-green  { background: var(--green-soft);  color: var(--green); }
+.badge-yellow { background: var(--yellow-soft); color: var(--yellow); }
+.badge-red    { background: var(--red-soft);    color: var(--red); }
+.badge-accent { background: var(--accent-soft); color: var(--accent); }
+.badge-gold   { background: var(--gold-soft);   color: var(--gold); }
 
 button {
   cursor: pointer;
@@ -55,7 +101,7 @@ button {
   transition: opacity 0.15s;
 }
 button:hover { opacity: 0.85; }
-button.primary { background: var(--accent); color: #fff; }
+button.primary { background: var(--accent); color: var(--on-accent); }
 button.ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
 
 select {
@@ -72,3 +118,13 @@ select {
 
 .strength-bar-wrap { background: var(--surface2); border-radius: 999px; height: 8px; overflow: hidden; }
 .strength-bar { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.4s; }
+
+.theme-toggle {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}

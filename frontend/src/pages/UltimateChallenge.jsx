@@ -4,9 +4,9 @@ import TeamSelector from '../components/TeamSelector';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 function getColor(acc) {
-  if (acc >= 0.65) return '#34d399';
-  if (acc >= 0.40) return '#fbbf24';
-  return '#f87171';
+  if (acc >= 0.65) return 'var(--green)';
+  if (acc >= 0.40) return 'var(--yellow)';
+  return 'var(--red)';
 }
 
 export default function UltimateChallenge() {
@@ -52,7 +52,7 @@ export default function UltimateChallenge() {
 
           {/* Recommendation card */}
           {rec && (
-            <div className="card" style={{ background: '#06322a', border: '1px solid var(--green)' }}>
+            <div className="card" style={{ background: 'var(--green-soft)', border: '1px solid var(--green)' }}>
               <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, marginBottom: 8 }}>
                 ⭐ RECOMMENDED UC CATEGORY
               </div>
@@ -91,10 +91,10 @@ export default function UltimateChallenge() {
               <div style={{ fontWeight: 700, marginBottom: 16 }}>UC Accuracy by Category</div>
               <ResponsiveContainer width="100%" height={Math.max(180, chartData.length * 36)}>
                 <BarChart data={chartData} layout="vertical">
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#8892a4', fontSize: 11 }} tickFormatter={v => `${v}%`} />
-                  <YAxis type="category" dataKey="cat" tick={{ fill: '#e2e8f0', fontSize: 11 }} width={150} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                  <YAxis type="category" dataKey="cat" tick={{ fill: 'var(--text)', fontSize: 11 }} width={150} />
                   <Tooltip
-                    contentStyle={{ background: '#1a1d27', border: '1px solid #2e3350', fontSize: 12 }}
+                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 12 }}
                     formatter={(v, name) => name === 'acc' ? [`${v}%`, 'Accuracy'] : [v, 'Avg Pts']}
                   />
                   <Bar dataKey="acc" radius={[0, 4, 4, 0]} name="acc">

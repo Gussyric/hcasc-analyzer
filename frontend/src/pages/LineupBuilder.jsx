@@ -5,7 +5,7 @@ import StrengthBar from '../components/StrengthBar';
 
 function LineupCard({ combo, isTop }) {
   const borderColor = isTop ? 'var(--green)' : 'var(--border)';
-  const bg = isTop ? '#06322a' : 'var(--surface)';
+  const bg = isTop ? 'var(--green-soft)' : 'var(--surface)';
 
   return (
     <div className="card" style={{ border: `1px solid ${borderColor}`, background: bg }}>

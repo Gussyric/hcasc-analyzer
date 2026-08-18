@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import TeamOverview from './pages/TeamOverview';
 import PlayerProfiles from './pages/PlayerProfiles';
 import LineupBuilder from './pages/LineupBuilder';
 import UltimateChallenge from './pages/UltimateChallenge';
 import HeadToHead from './pages/HeadToHead';
+import About from './pages/About';
 import './index.css';
 
 const NAV = [
@@ -12,9 +14,23 @@ const NAV = [
   { to: '/lineup',            label: '⚡ Lineup Builder' },
   { to: '/ultimate-challenge',label: '🏆 Ultimate Challenge' },
   { to: '/head-to-head',      label: '⚔️  Head-to-Head' },
+  { to: '/about',             label: 'ℹ️  About' },
 ];
 
+function getInitialTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'light' || saved === 'dark') return saved;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export default function App() {
+  const [theme, setTheme] = useState(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   return (
     <BrowserRouter>
       <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -44,7 +60,7 @@ export default function App() {
                 borderRadius: 8,
                 fontSize: 13,
                 fontWeight: 500,
-                color: isActive ? '#fff' : 'var(--muted)',
+                color: isActive ? 'var(--on-accent)' : 'var(--muted)',
                 background: isActive ? 'var(--accent)' : 'transparent',
                 transition: 'all 0.15s',
               })}
@@ -52,6 +68,15 @@ export default function App() {
               {label}
             </NavLink>
           ))}
+
+          <div style={{ flex: 1 }} />
+
+          <button
+            className="theme-toggle"
+            onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+          >
+            {theme === 'dark' ? '☀️ Light mode' : '🌙 Dark mode'}
+          </button>
         </aside>
 
         {/* Main content */}
@@ -62,6 +87,7 @@ export default function App() {
             <Route path="/lineup"             element={<LineupBuilder />} />
             <Route path="/ultimate-challenge" element={<UltimateChallenge />} />
             <Route path="/head-to-head"       element={<HeadToHead />} />
+            <Route path="/about"              element={<About />} />
           </Routes>
         </main>
       </div>

@@ -1,6 +1,6 @@
 export default function StrengthBar({ value, showLabel = true }) {
   const pct = Math.round((value || 0) * 100);
-  const color = pct >= 65 ? '#34d399' : pct >= 40 ? '#fbbf24' : '#f87171';
+  const color = pct >= 65 ? 'var(--green)' : pct >= 40 ? 'var(--yellow)' : 'var(--red)';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <div className="strength-bar-wrap" style={{ flex: 1 }}>

@@ -2,9 +2,9 @@
 // accuracy 0-40% = red, 40-65% = yellow, 65%+ = green
 
 function getColor(accuracy) {
-  if (accuracy >= 0.65) return { bg: '#064e3b', text: '#34d399' };
-  if (accuracy >= 0.40) return { bg: '#451a03', text: '#fbbf24' };
-  return { bg: '#450a0a', text: '#f87171' };
+  if (accuracy >= 0.65) return { bg: 'var(--green-soft)', text: 'var(--green)' };
+  if (accuracy >= 0.40) return { bg: 'var(--yellow-soft)', text: 'var(--yellow)' };
+  return { bg: 'var(--red-soft)', text: 'var(--red)' };
 }
 
 export default function CategoryHeatmap({ coverage }) {
@@ -32,11 +32,11 @@ export default function CategoryHeatmap({ coverage }) {
             <div style={{ fontSize: 11, color: text, fontWeight: 700, marginBottom: 4 }}>
               {(data.best_accuracy * 100).toFixed(0)}%
             </div>
-            <div style={{ fontSize: 12, color: '#e2e8f0', fontWeight: 500, lineHeight: 1.3 }}>
+            <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, lineHeight: 1.3 }}>
               {cat}
             </div>
             {data.best_player && (
-              <div style={{ fontSize: 11, color: '#8892a4', marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
                 ↑ {data.best_player}
               </div>
             )}

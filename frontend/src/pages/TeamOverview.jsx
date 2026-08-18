@@ -149,10 +149,10 @@ export default function TeamOverview() {
               <div style={{ fontWeight: 700, marginBottom: 16 }}>Top Categories (Radar)</div>
               <ResponsiveContainer width="100%" height={250}>
                 <RadarChart data={radarData}>
-                  <PolarGrid stroke="#2e3350" />
-                  <PolarAngleAxis dataKey="cat" tick={{ fill: '#8892a4', fontSize: 11 }} />
-                  <Radar dataKey="value" stroke="#4f8ef7" fill="#4f8ef7" fillOpacity={0.25} />
-                  <Tooltip contentStyle={{ background: '#1a1d27', border: '1px solid #2e3350' }} />
+                  <PolarGrid stroke="var(--border)" />
+                  <PolarAngleAxis dataKey="cat" tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                  <Radar dataKey="value" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.25} />
+                  <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
                 </RadarChart>
               </ResponsiveContainer>
             </div>

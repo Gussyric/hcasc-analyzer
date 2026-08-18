@@ -5,9 +5,9 @@ import StrengthBar from '../components/StrengthBar';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 function getBarColor(val) {
-  if (val >= 65) return '#34d399';
-  if (val >= 40) return '#fbbf24';
-  return '#f87171';
+  if (val >= 65) return 'var(--green)';
+  if (val >= 40) return 'var(--yellow)';
+  return 'var(--red)';
 }
 
 function PlayerCard({ player, isSelected, onClick }) {
@@ -18,7 +18,7 @@ function PlayerCard({ player, isSelected, onClick }) {
       style={{
         cursor: 'pointer',
         border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
-        background: isSelected ? '#1e3a5f' : 'var(--surface)',
+        background: isSelected ? 'var(--accent-soft)' : 'var(--surface)',
         transition: 'all 0.15s',
       }}
     >
@@ -119,10 +119,10 @@ export default function PlayerProfiles() {
                 <div style={{ fontWeight: 700, marginBottom: 16 }}>Accuracy by Category</div>
                 <ResponsiveContainer width="100%" height={Math.max(200, chartData.length * 28)}>
                   <BarChart data={chartData} layout="vertical" margin={{ left: 10 }}>
-                    <XAxis type="number" domain={[0, 100]} tick={{ fill: '#8892a4', fontSize: 11 }} tickFormatter={v => `${v}%`} />
-                    <YAxis type="category" dataKey="cat" tick={{ fill: '#e2e8f0', fontSize: 11 }} width={140} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                    <YAxis type="category" dataKey="cat" tick={{ fill: 'var(--text)', fontSize: 11 }} width={140} />
                     <Tooltip
-                      contentStyle={{ background: '#1a1d27', border: '1px solid #2e3350', fontSize: 12 }}
+                      contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 12 }}
                       formatter={(v) => [`${v}%`, 'Accuracy']}
                     />
                     <Bar dataKey="acc" radius={[0, 4, 4, 0]}>
